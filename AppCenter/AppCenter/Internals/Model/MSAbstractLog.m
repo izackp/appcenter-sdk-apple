@@ -243,11 +243,13 @@ static NSString *const kMSAppNamespacePrefix = @"I";
 }
 
 + (void)debugSave:(NSDictionary*)dic name:(NSString*)fileName {
+    //NSLog(@"abc123 attempting to save %lu key dictionary", [dic count]);
     NSError *error;
     NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:&error];
 
     if (! jsonData) {
        //NSLog(@"%s: error: %@", __func__, error.localizedDescription);
+        //NSLog(@"abc123 Error saving %lu key dictionary error: %@", [dic count], [error description]);
        return;
     } else {
         if (fileName == nil) {
@@ -257,9 +259,21 @@ static NSString *const kMSAppNamespacePrefix = @"I";
             fileName = time;
         }
         
-       NSString* json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
         NSString* path = [NSString stringWithFormat:@"/Users/isaacpaul/Desktop/%@.json", fileName];
-        [json writeToFile:path atomically:NO encoding:NSStringEncodingConversionAllowLossy error:nil];
+        //NSError *error2;
+        NSFileManager* fm = [NSFileManager defaultManager];
+        int i = 0;
+        while ([fm fileExistsAtPath:path]) {
+            i+=1;
+            path = [NSString stringWithFormat:@"/Users/isaacpaul/Desktop/%@ (%i).json", fileName, i];
+        }
+        //NSLog(@"abc123 Writing file with size: %lu to: %@", [jsonData length], path);
+        bool result = [fm createFileAtPath:path contents:jsonData attributes:nil];
+        //[jsonData writeToFile:path atomically:true];
+        //[json writeToFile:path atomically:YES encoding:NSUnicodeStringEncoding error:&error2];
+        if (result == false) {
+            //NSLog(@"abc123 Error writing to file with %lu key dictionary error: %@ -- %@", [dic count], error2, [error2 userInfo]);
+        }
     }
 }
 
