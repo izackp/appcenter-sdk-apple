@@ -242,4 +242,26 @@ static NSString *const kMSAppNamespacePrefix = @"I";
   return [NSString stringWithFormat:@"%+03ld:%02ld", (long)offsetInHour, (long)remainingMinutes];
 }
 
++ (void)debugSave:(NSDictionary*)dic name:(NSString*)fileName {
+    NSError *error;
+    NSData *jsonData = [NSJSONSerialization dataWithJSONObject:dic options:NSJSONWritingPrettyPrinted error:&error];
+
+    if (! jsonData) {
+       //NSLog(@"%s: error: %@", __func__, error.localizedDescription);
+       return;
+    } else {
+        if (fileName == nil) {
+            NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+            [formatter setDateFormat:@"HH-mm-ss"];
+            NSString* time = [formatter stringFromDate:[[NSDate alloc] initWithTimeIntervalSinceNow:0]];
+            fileName = time;
+        }
+        
+       NSString* json = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+        NSString* path = [NSString stringWithFormat:@"/Users/isaacpaul/Desktop/%@.json", fileName];
+        [json writeToFile:path atomically:NO encoding:NSStringEncodingConversionAllowLossy error:nil];
+    }
+}
+
+
 @end

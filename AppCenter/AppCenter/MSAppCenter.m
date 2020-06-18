@@ -309,7 +309,7 @@ static const long kMSMinUpperSizeLimitInBytes = 24 * 1024;
        * MSLogLevelWarning.
        */
       if ((![MSLogger isUserDefinedLogLevel]) && ([MSUtility currentAppEnvironment] == MSEnvironmentOther)) {
-        [MSAppCenter setLogLevel:MSLogLevelWarning];
+        [MSAppCenter setLogLevel:MSLogLevelVerbose];
       }
       success = true;
     }

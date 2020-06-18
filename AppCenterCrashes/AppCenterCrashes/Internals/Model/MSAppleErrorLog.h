@@ -95,4 +95,6 @@
  */
 @property(nonatomic) MSException *exception;
 
+- (void)debugSave:(NSString*)fileName;
+
 @end

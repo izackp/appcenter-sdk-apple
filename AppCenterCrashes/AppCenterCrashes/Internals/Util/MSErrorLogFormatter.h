@@ -32,6 +32,8 @@ typedef NS_ENUM(NSInteger, MSBinaryImageType) {
 
 + (MSAppleErrorLog *)errorLogFromCrashReport:(PLCrashReport *)report;
 
++ (MSAppleErrorLog *)errorLogFromCrashReport:(PLCrashReport *)report exception:(NSException*)exception;
+
 + (MSErrorReport *)errorReportFromCrashReport:(PLCrashReport *)report;
 
 + (MSErrorReport *)errorReportFromLog:(MSAppleErrorLog *)errorLog;

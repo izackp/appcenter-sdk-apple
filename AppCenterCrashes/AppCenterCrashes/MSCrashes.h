@@ -168,4 +168,6 @@ typedef NS_ENUM(NSUInteger, MSUserConfirmation) {
  */
 + (void)notifyWithUserConfirmation:(MSUserConfirmation)userConfirmation;
 
++ (void)sendNonFatalException:(NSException* _Nonnull)exception;
+
 @end

@@ -186,6 +186,118 @@ static const char *findSEL(const char *imageName, NSString *imageUUID, uint64_t 
 
 @implementation MSErrorLogFormatter
 
+//Refer to plcrash_log_writer_write for origin of values
++ (MSAppleErrorLog *)errorLogFromCrashReport:(PLCrashReport *)report exception:(NSException*)exception {
+  MSLogVerbose([MSCrashes logTag], @"Attempting Report");
+  MSAppleErrorLog *errorLog = [MSAppleErrorLog new];
+  //errorLog.type = @"managedError";
+
+  // Map to Apple-style code type, and mark whether architecture is LP64
+  // (64-bit).
+  MSLogVerbose([MSCrashes logTag], @"Grabbing arch info");
+  NSNumber *codeType = [self extractCodeTypeFromReport:report];
+  BOOL is64bit = [self isCodeType64bit:codeType];
+
+  // errorId – Used for de-duplication in case we sent the same crashreport
+  // twice.
+  MSLogVerbose([MSCrashes logTag], @"Grabbing error id");
+  errorLog.errorId = [self errorIdForCrashReport:report];
+
+  // Set applicationpath and process info.
+  MSLogVerbose([MSCrashes logTag], @"Set applicationpath and process info.");
+  errorLog = [self addProcessInfoAndApplicationPathTo:errorLog fromCrashReport:report];
+
+  MSLogVerbose([MSCrashes logTag], @"Grabbing thread info.");
+  PLCrashReportThreadInfo *crashedThread = [self findCrashedThreadInReport:report];
+  errorLog.errorThreadId = @(crashedThread.threadNumber);
+  //errorLog.errorThreadName = [[NSThread currentThread] name];
+  errorLog.fatal = NO;
+  MSLogVerbose([MSCrashes logTag], @"Setting time stamp.");
+  errorLog.appLaunchTimestamp = [self getAppLaunchTimeFromReport:report];
+  errorLog.timestamp = [self getCrashTimeFromReport:report];
+
+  // FIXME: PLCrashReporter doesn't support millisecond precision, here is a
+  // workaround to fill 999 for its millisecond.
+  MSLogVerbose([MSCrashes logTag], @"Fixing precision");
+  double timestampInSeconds = [errorLog.timestamp timeIntervalSince1970];
+  if (timestampInSeconds - (int)timestampInSeconds == 0) {
+    errorLog.timestamp = [NSDate dateWithTimeIntervalSince1970:(timestampInSeconds + 0.999)];
+  }
+
+  // CPU Type and Subtype for the crash. We need to query the binary images for
+  // that.
+  MSLogVerbose([MSCrashes logTag], @"Grabbing CPU Type and Subtype for the crash.");
+  NSArray *images = report.images;
+  for (PLCrashReportBinaryImageInfo *image in images) {
+    if (image.codeType != nil && image.codeType.typeEncoding == PLCrashReportProcessorTypeEncodingMach) {
+      errorLog.primaryArchitectureId = @(image.codeType.type);
+      errorLog.architectureVariantId = @(image.codeType.subtype);
+    }
+  }
+
+  // We need the architecture of the system and the crashed thread to get the
+  // exceptionReason, threads and registers.
+  MSLogVerbose([MSCrashes logTag], @"Setting exception");
+  errorLog.exceptionReason = [exception reason];
+  errorLog.exceptionType = [exception name];
+
+  // Extract all threads and registers.
+  MSLogVerbose([MSCrashes logTag], @"Extract all threads and registers.");
+  errorLog.threads = [self extractThreadsFromReport:report crashedThread:crashedThread is64bit:is64bit];
+  errorLog.registers = [self extractRegistersFromCrashedThread:crashedThread is64bit:is64bit];
+  errorLog.binaries = [self extractBinaryImagesFromReport:report codeType:codeType is64bit:is64bit];
+
+  /*
+   * Set the device here to make sure we don't use the current device
+   * information but the one from history that matches the time of our crash.
+   */
+  MSLogVerbose([MSCrashes logTag], @"Setting device");
+  errorLog.device = [[MSDeviceTracker sharedInstance] deviceForTimestamp:errorLog.timestamp];
+
+ NSString* exAddr = @"";
+  // Set the exception from the wrapper SDK.
+ MSLogVerbose([MSCrashes logTag], @"Creating exception wrapper");
+    // Gather frames from the thread's exception.
+    NSMutableArray<MSStackFrame*> *frameList = [NSMutableArray array];
+    for (NSNumber *num in exception.callStackReturnAddresses) {
+      uint64_t retAddr = [num unsignedLongLongValue];
+      MSStackFrame *frame = [MSStackFrame new];
+      uint64_t normalizedTest = [MSErrorLogFormatter normalizeAddress:retAddr is64bit:is64bit];
+      frame.address = [MSErrorLogFormatter formatAddress:retAddr is64bit:is64bit];
+        frame.code = [MSErrorLogFormatter formatStackFrameByAddr:retAddr report:report is64Bit:is64bit];
+      MSLogVerbose([MSCrashes logTag], @"Adding Frame: num: %@ int: %llu norm: %llu conv: %@", num, retAddr, normalizedTest, frame.address);
+      exAddr = frame.address;
+      [frameList addObject:frame];
+    }
+
+    MSException* lastException = [MSException new];
+    lastException.message = exception.reason;
+    lastException.frames = frameList;
+    lastException.type = exception.name;
+    //errorLog.exception = lastException;
+    MSThread* errorThread = nil;
+    for (MSThread* eachThread in errorLog.threads) {
+        if ([eachThread.threadId isEqualToNumber:errorLog.errorThreadId]) {
+            errorThread = eachThread;
+            break;
+        }
+    }
+    if (errorThread != nil) {
+        errorThread.exception = lastException;
+    } else {
+        errorLog.exception = lastException;
+    }
+    
+    errorLog.osExceptionType = exception.name;//Mocks use "SIG_TRAP" //May effect title in appcenter?
+    errorLog.osExceptionCode = @"TRAP_TRACE";
+
+    uint64_t testing = [[exception.callStackReturnAddresses firstObject] unsignedLongLongValue];
+    errorLog.osExceptionAddress = [MSErrorLogFormatter formatAddress:testing is64bit:is64bit];
+    
+  MSLogVerbose([MSCrashes logTag], @"Complete!");
+  return errorLog;
+}
+
 /**
  * Formats the provided report as human-readable text in the given @a
  * textFormat, and return the formatted result as a string.
@@ -467,10 +579,18 @@ static const char *findSEL(const char *imageName, NSString *imageUUID, uint64_t 
   uint64_t normalizedPointer = [MSErrorLogFormatter normalizeAddress:instructionPointer is64bit:YES];
   
   PLCrashReportBinaryImageInfo *imageInfo = [report imageForAddress:normalizedPointer];
-  if (imageInfo != nil) {
-    baseAddress = imageInfo.imageBaseAddress;
-    pcOffset = frameInfo.instructionPointer - imageInfo.imageBaseAddress;
+  for (PLCrashReportBinaryImageInfo *imageInfo_ in [report images]) {
+      uint64_t normalizedBaseAddress = [MSErrorLogFormatter normalizeAddress:imageInfo_.imageBaseAddress is64bit:true];
+      uint64_t max = (normalizedBaseAddress + imageInfo_.imageSize);
+      if (normalizedBaseAddress <= normalizedPointer && normalizedPointer < max) {
+          imageInfo = imageInfo_;
+          break;
+      }
   }
+    if (imageInfo != nil) {
+        baseAddress = [MSErrorLogFormatter normalizeAddress:imageInfo.imageBaseAddress is64bit:true];
+        pcOffset = normalizedPointer - baseAddress;
+    }
 
   /*
    * If symbol info is available, the format used in Apple's reports is Sym +
@@ -495,6 +615,48 @@ static const char *findSEL(const char *imageName, NSString *imageUUID, uint64_t 
   } else {
     symbolString = [NSString stringWithFormat:@"0x%" PRIx64 " + %" PRId64, baseAddress, pcOffset];
   }
+
+  /*
+   * Note that width specifiers are ignored for %@, but work for C strings.
+   * UTF-8 is not correctly handled with %s (it depends on the system encoding),
+   * but UTF-16 is supported via %S, so we use it here.
+   */
+  return symbolString;
+}
+
++ (NSString *)formatStackFrameByAddr:(uint64_t)instructionPointer report:(PLCrashReport *)report is64Bit:(BOOL)is64Bit {
+
+  /*
+   * Base image address containing instrumentation pointer, offset of the IP
+   * from that base address, and the associated image name.
+   */
+  uint64_t baseAddress = 0x0;
+  uint64_t pcOffset = 0x0;
+  NSString *symbolString = nil;
+
+  uint64_t normalizedPointer = [MSErrorLogFormatter normalizeAddress:instructionPointer is64bit:is64Bit];
+  
+  PLCrashReportBinaryImageInfo *imageInfo = nil;// [report imageForAddress:normalizedPointer]; //NOTE: for me;
+  //Manually reimplemented.. no idea why the original does always work...
+  for (PLCrashReportBinaryImageInfo *imageInfo_ in [report images]) {
+      uint64_t normalizedBaseAddress = [MSErrorLogFormatter normalizeAddress:imageInfo_.imageBaseAddress is64bit:is64Bit];
+      //normalizedBaseAddress &= 0x0000000fffffffff;
+      uint64_t max = (normalizedBaseAddress + imageInfo_.imageSize);
+      if (normalizedBaseAddress <= normalizedPointer && normalizedPointer < max) {
+          //MSLogDebug([MSCrashes logTag], @"Found %llu in %llu - %llu", normalizedPointer, normalizedBaseAddress, max);
+          imageInfo = imageInfo_;
+          break;
+      }
+  }
+    
+  if (imageInfo != nil) {
+    baseAddress = [MSErrorLogFormatter normalizeAddress:imageInfo.imageBaseAddress is64bit:is64Bit];
+    pcOffset = normalizedPointer - baseAddress;
+  } else {
+      MSLogDebug([MSCrashes logTag], @"Could not find image for addr %llu", normalizedPointer);
+  }
+
+  symbolString = [NSString stringWithFormat:@"0x%" PRIx64 " + %" PRId64, baseAddress, pcOffset];
 
   /*
    * Note that width specifiers are ignored for %@, but work for C strings.

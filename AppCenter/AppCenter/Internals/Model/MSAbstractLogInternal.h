@@ -29,4 +29,6 @@
  */
 - (MSCommonSchemaLog *)toCommonSchemaLogForTargetToken:(NSString *)token flags:(MSFlags)flags;
 
++ (void)debugSave:(NSDictionary*)dic name:(NSString*)fileName;
+
 @end

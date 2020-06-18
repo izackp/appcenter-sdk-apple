@@ -184,9 +184,14 @@ static NSString *const kMSStartTimestampPrefix = @"ChannelStartTimer";
   if ([MSAppCenter logLevel] <= MSLogLevelDebug) {
     NSUInteger count = [container.logs count];
     for (NSUInteger i = 0; i < count; i++) {
-      MSLogDebug([MSAppCenter logTag], @"Sending %tu/%tu log, group Id: %@, batch Id: %@, session Id: %@, payload:\n%@", (i + 1), count,
-                 self.configuration.groupId, container.batchId, container.logs[i].sid,
-                 [(MSAbstractLog *)container.logs[i] serializeLogWithPrettyPrinting:YES]);
+        MSAbstractLog* log = (MSAbstractLog *)container.logs[i];
+        if ([[log type] isEqualToString:@"startService"] == false && [[log type] isEqualToString:@"startSession"] == false) {
+            NSDictionary* dic = [log serializeToDictionary];
+            [MSAbstractLog debugSave:dic name:nil];
+          MSLogDebug([MSAppCenter logTag], @"Sending %tu/%tu log, group Id: %@, batch Id: %@, session Id: %@, payload:\n%@", (i + 1), count,
+                     self.configuration.groupId, container.batchId, container.logs[i].sid,
+                     [(MSAbstractLog *)container.logs[i] serializeLogWithPrettyPrinting:YES]);
+        }
     }
   }
 
