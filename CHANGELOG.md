@@ -1,6 +1,6 @@
 # App Center SDK for iOS, macOS and tvOS Change Log
 
-## Version 3.2.1 (Under development)
+## Version 3.3.0
 
 Add support for Mac Catalyst to App Center Analytics and App Center Crashes. Also, this version has a breaking change - it drops Xcode 10 support, Xcode 11 is a minimal supported version now.
 
@@ -10,7 +10,7 @@ Add support for Mac Catalyst to App Center Analytics and App Center Crashes. Als
 * **[Fix]** Fix `Undefined symbol: ___llvm_profile_runtime` when the SDK was built from source by Carthage.
 * **[Fix]** Fix building tvOS frameworks from source by Carthage.
 * **[Fix]** Fix screen resolution detection on macOS.
-* **[Fix]** Fix crash when local binary data (where unsended logs or unprocessed crashed are stored) is corrupted.
+* **[Fix]** Fix crash when local binary data (where unsent logs or unprocessed crashed are stored) is corrupted.
 * **[Fix]** When carrier name is retrieved incorrectly by iOS, show `nil` as expected instead of "carrier" string.
 
 ### App Center Analytics
@@ -20,6 +20,7 @@ Add support for Mac Catalyst to App Center Analytics and App Center Crashes. Als
 ### App Center Crashes
 
 * **[Feature]** Add support for Mac Catalyst.
+* **[Improvement]** Update PLCrashReporter to 1.7.0.
 
 ___
 
