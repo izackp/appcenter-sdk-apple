@@ -1266,6 +1266,48 @@ __attribute__((noreturn)) static void uncaught_cxx_exception_handler(const MSACC
   [self handleUserConfirmation:userConfirmation];
 }
 
++ (void)sendNonFatalException:(NSException*)exception {
+    [[MSACCrashes sharedInstance] sendNonFatalException:exception];
+}
+
+- (void)sendNonFatalException:(NSException*)exception {
+    MSACLogVerbose([MSACCrashes logTag], @"Generating Live Report");
+    NSError* error;
+    NSData *reportData = [self.plCrashReporter generateLiveReportAndReturnError: &error];
+    if (reportData == nil) {
+        MSACLogVerbose([MSACCrashes logTag], @"Failed to generate live report data: %@", error);
+        return;
+    }
+    MSACLogVerbose([MSACCrashes logTag], @"Loading pl crash report from data");
+    PLCrashReport* report = [[PLCrashReport alloc] initWithData: reportData error: &error];
+    if (report == nil) {
+        MSACLogVerbose([MSACCrashes logTag], @"Failed to generate live report: %@", error);
+        return;
+    }
+    MSACLogVerbose([MSACCrashes logTag], @"Creating log");
+    MSACAppleErrorLog *log = [MSACErrorLogFormatter errorLogFromCrashReport:report exception:exception];
+    MSACLogVerbose([MSACCrashes logTag], @"Creating report");
+    MSACErrorReport *errorReport = [MSACErrorLogFormatter errorReportFromLog:log];
+    if (self.unprocessedReports == nil) {
+        MSACLogVerbose([MSACCrashes logTag], @"Creating unprocessed arrays");
+        self.unprocessedReports = [NSMutableArray new];
+        self.unprocessedLogs = [NSMutableArray new];
+        self.unprocessedFilePaths = [NSMutableArray new];
+    }
+    [self.unprocessedLogs addObject:log];
+    [self.unprocessedReports addObject:errorReport];
+    [self.unprocessedFilePaths addObject:[NSNull null]];
+    
+    if ([log isValid] == false) {
+        MSACLogVerbose([MSACCrashes logTag], @"Log invalid.");
+        return;
+    }
+    //MSLogVerbose([MSCrashes logTag], @"Sending crash report (%@):\n%@", [errorReport isValid] ? @"valid" : @"invalid", [errorReport serializeToDictionary]);
+    MSACLogVerbose([MSACCrashes logTag], @"Sending Crash Report");
+    //[log debugSave:@"customLogLast"];
+    [self sendCrashReportsOrAwaitUserConfirmation];
+}
+
 - (void)handleUserConfirmation:(MSACUserConfirmation)userConfirmation {
   NSArray<MSACErrorAttachmentLog *> *attachments;
 

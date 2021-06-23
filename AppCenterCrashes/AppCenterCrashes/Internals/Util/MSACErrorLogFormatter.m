@@ -187,6 +187,147 @@ static const char *findSEL(const char *imageName, NSString *imageUUID, uint64_t 
 
 @implementation MSACErrorLogFormatter
 
+//Refer to plcrash_log_writer_write for origin of values
++ (MSACAppleErrorLog *)errorLogFromCrashReport:(PLCrashReport *)report exception:(NSException*)exception {
+  MSACLogVerbose([MSACCrashes logTag], @"Attempting Report");
+  MSACAppleErrorLog *errorLog = [MSACAppleErrorLog new];
+  //errorLog.type = @"managedError";
+
+  // errorId – Used for de-duplication in case we sent the same crashreport twice.
+  MSACLogVerbose([MSACCrashes logTag], @"Grabbing error id");
+  errorLog.errorId = [self errorIdForCrashReport:report];
+
+  // Set applicationpath and process info.
+  MSACLogVerbose([MSACCrashes logTag], @"Set applicationpath and process info.");
+  errorLog = [self addProcessInfoAndApplicationPathTo:errorLog fromCrashReport:report];
+
+  MSACLogVerbose([MSACCrashes logTag], @"Grabbing thread info.");
+  // Find the crashed thread.
+  PLCrashReportThreadInfo *crashedThread = [self findCrashedThreadInReport:report];
+
+  // Error Thread Id from the crashed thread.
+  errorLog.errorThreadId = @(crashedThread.threadNumber);
+  //TODO: won't be used on iOS right now, this will be relevant for handled exceptions.
+  //errorLog.errorThreadName = [[NSThread currentThread] name];
+  errorLog.fatal = NO;
+  MSACLogVerbose([MSACCrashes logTag], @"Setting time stamp.");
+  errorLog.appLaunchTimestamp = [self getAppLaunchTimeFromReport:report];
+  errorLog.timestamp = [self getCrashTimeFromReport:report];
+
+  // FIXME: PLCrashReporter doesn't support millisecond precision, here is a
+  // workaround to fill 999 for its millisecond.
+  MSACLogVerbose([MSACCrashes logTag], @"Fixing precision");
+  double timestampInSeconds = [errorLog.timestamp timeIntervalSince1970];
+  if (timestampInSeconds - (int)timestampInSeconds == 0) {
+    errorLog.timestamp = [NSDate dateWithTimeIntervalSince1970:(timestampInSeconds + 0.999)];
+  }
+
+  // CPU Type and Subtype for the crash. We need to query the binary images for that.
+  MSACLogVerbose([MSACCrashes logTag], @"Grabbing CPU Type and Subtype for the crash.");
+  uint64_t type = report.machineInfo.processorInfo.type;
+  uint64_t subtype = report.machineInfo.processorInfo.subtype;
+  for (PLCrashReportBinaryImageInfo *image in report.images) {
+    if (image.codeType != nil && image.codeType.typeEncoding == PLCrashReportProcessorTypeEncodingMach) {
+      type = image.codeType.type;
+      subtype = image.codeType.subtype;
+      break;
+    }
+  }
+  BOOL is64bit = [self isCodeType64bit:type];
+  errorLog.primaryArchitectureId = @(type);
+  errorLog.architectureVariantId = @(subtype);
+
+  /*
+   * errorLog.architecture is an optional. The Android SDK will set it while for
+   * iOS, the file will be set on the server using primaryArchitectureId and
+   * architectureVariantId.
+   */
+
+  /*
+   * HockeyApp didn't use report.exceptionInfo for this field but exception.name
+   * in case of an unhandled exception or the report.signalInfo.name. More so,
+   * for BITCrashDetails, we used the exceptionInfo.exceptionName for a field
+   * called exceptionName.
+   */
+  errorLog.osExceptionType = report.signalInfo.name;
+  errorLog.osExceptionCode = report.signalInfo.code;
+  errorLog.osExceptionAddress = [NSString stringWithFormat:@"0x%" PRIx64, report.signalInfo.address];
+
+  // We need the architecture of the system and the crashed thread to get the
+  // exceptionReason, threads and registers.
+  MSACLogVerbose([MSACCrashes logTag], @"Setting exception");
+  errorLog.exceptionReason = [exception reason];
+  errorLog.exceptionType = [exception name];
+    
+  // The registers of the crashed thread might contain the last method call,
+  // this can be very helpful.
+  errorLog.selectorRegisterValue = [self selectorRegisterValueFromReport:report ofCrashedThread:crashedThread codeType:type];
+
+  // Extract all threads and registers.
+  MSACLogVerbose([MSACCrashes logTag], @"Extract all threads and registers.");
+  errorLog.threads = [self extractThreadsFromReport:report crashedThread:crashedThread is64bit:is64bit];
+  errorLog.registers = [self extractRegistersFromCrashedThread:crashedThread is64bit:is64bit];
+  errorLog.binaries = [self extractBinaryImagesFromReport:report is64bit:is64bit];
+
+  /*
+   * Set the device here to make sure we don't use the current device
+   * information but the one from history that matches the time of our crash.
+   */
+  MSACLogVerbose([MSACCrashes logTag], @"Setting device");
+  errorLog.device = [[MSACDeviceTracker sharedInstance] deviceForTimestamp:errorLog.timestamp];
+
+ NSString* exAddr = @"";
+  // Set the exception from the wrapper SDK.
+ MSACLogVerbose([MSACCrashes logTag], @"Creating exception wrapper");
+    
+    /*
+     for (PLCrashReportStackFrameInfo *frameInfo in exception.stackFrames) {
+       MSACStackFrame *frame = [MSACStackFrame new];
+       frame.address = [MSACErrorLogFormatter formatAddress:frameInfo.instructionPointer is64bit:is64bit];
+       [exceptionThread.frames addObject:frame];
+     }
+     */
+    // Gather frames from the thread's exception.
+    NSMutableArray<MSACStackFrame*> *frameList = [NSMutableArray array];
+    for (NSNumber *num in exception.callStackReturnAddresses) {
+      uint64_t retAddr = [num unsignedLongLongValue];
+      MSACStackFrame *frame = [MSACStackFrame new];
+      //uint64_t normalizedTest = [MSACErrorLogFormatter normalizeAddress:retAddr is64bit:is64bit];
+      frame.address = [MSACErrorLogFormatter formatAddress:retAddr is64bit:is64bit];
+      frame.code = [MSACErrorLogFormatter formatStackFrameByAddr:retAddr report:report is64Bit:is64bit];
+      //MSACLogVerbose([MSACCrashes logTag], @"Adding Frame: num: %@ int: %llu norm: %llu conv: %@", num, retAddr, normalizedTest, frame.address);
+      exAddr = frame.address;
+      [frameList addObject:frame];
+    }
+
+    MSACException* lastException = [MSACException new];
+    lastException.message = exception.reason;
+    lastException.frames = frameList;
+    lastException.type = exception.name;
+    //errorLog.exception = lastException;
+    MSACThread* errorThread = nil;
+    for (MSACThread* eachThread in errorLog.threads) {
+        if ([eachThread.threadId isEqualToNumber:errorLog.errorThreadId]) {
+            errorThread = eachThread;
+            break;
+        }
+    }
+    if (errorThread != nil) {
+        errorThread.exception = lastException;
+    } else {
+        errorLog.exception = lastException;
+    }
+    
+    errorLog.osExceptionType = exception.name;//Mocks use "SIG_TRAP" //May effect title in appcenter?
+    errorLog.osExceptionCode = @"TRAP_TRACE";
+
+    uint64_t testing = [[exception.callStackReturnAddresses firstObject] unsignedLongLongValue];
+    errorLog.osExceptionAddress = [MSACErrorLogFormatter formatAddress:testing is64bit:is64bit];
+    
+  MSACLogVerbose([MSACCrashes logTag], @"Complete!");
+  return errorLog;
+}
+
 /**
  * Formats the provided report as human-readable text in the given @a
  * textFormat, and return the formatted result as a string.
@@ -504,6 +645,51 @@ static const char *findSEL(const char *imageName, NSString *imageUUID, uint64_t 
    */
   return symbolString;
 }
+
++ (NSString *)formatStackFrameByAddr:(uint64_t)instructionPointer report:(PLCrashReport *)report is64Bit:(BOOL)is64Bit {
+
+  /*
+   * Base image address containing instrumentation pointer, offset of the IP
+   * from that base address, and the associated image name.
+   */
+  uint64_t baseAddress = 0x0;
+  uint64_t pcOffset = 0x0;
+  NSString *symbolString = nil;
+    
+  PLCrashReportBinaryImageInfo *imageInfo = [report imageForAddress:instructionPointer];
+  
+  /*
+  PLCrashReportBinaryImageInfo *imageInfo = nil;
+  //Manually reimplemented.. no idea why the original does always work...
+  for (PLCrashReportBinaryImageInfo *imageInfo_ in [report images]) {
+      uint64_t normalizedBaseAddress = [MSACErrorLogFormatter normalizeAddress:imageInfo_.imageBaseAddress is64bit:is64Bit];
+      //normalizedBaseAddress &= 0x0000000fffffffff;
+      uint64_t max = (normalizedBaseAddress + imageInfo_.imageSize);
+      if (normalizedBaseAddress <= normalizedPointer && normalizedPointer < max) {
+          //MSLogDebug([MSCrashes logTag], @"Found %llu in %llu - %llu", normalizedPointer, normalizedBaseAddress, max);
+          imageInfo = imageInfo_;
+          break;
+      }
+  }
+  */
+    
+  if (imageInfo != nil) {
+      baseAddress = imageInfo.imageBaseAddress;
+      pcOffset = instructionPointer - imageInfo.imageBaseAddress;
+  } else {
+      MSACLogDebug([MSACCrashes logTag], @"Cannot find image for 0x%" PRIx64, instructionPointer);
+  }
+
+  symbolString = [NSString stringWithFormat:@"0x%" PRIx64 " + %" PRId64, baseAddress, pcOffset];
+
+  /*
+   * Note that width specifiers are ignored for %@, but work for C strings.
+   * UTF-8 is not correctly handled with %s (it depends on the system encoding),
+   * but UTF-16 is supported via %S, so we use it here.
+   */
+  return symbolString;
+}
+
 
 + (NSDictionary<NSString *, NSString *> *)extractRegistersFromCrashedThread:(PLCrashReportThreadInfo *)crashedThread is64bit:(BOOL)is64bit {
   NSMutableDictionary<NSString *, NSString *> *registers = [NSMutableDictionary new];

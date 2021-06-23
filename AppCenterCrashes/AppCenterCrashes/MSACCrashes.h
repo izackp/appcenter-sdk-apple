@@ -176,4 +176,6 @@ NS_SWIFT_NAME(Crashes)
  */
 + (void)notifyWithUserConfirmation:(MSACUserConfirmation)userConfirmation;
 
++ (void)sendNonFatalException:(NSException* _Nonnull)exception;
+
 @end
