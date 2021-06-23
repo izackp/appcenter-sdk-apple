@@ -67,7 +67,7 @@ static NSString *const kMSACAppCenterBundleIdentifier = @"com.microsoft.appcente
 // TODO: We should remove this and just expose the method taking a pathComponent.
 + (BOOL)deleteFileAtURL:(NSURL *)fileURL {
   @synchronized(self) {
-    if (fileURL) {
+    if (fileURL && [fileURL isKindOfClass:[NSNull class]] == false) {
 
       /*
        * No need to check existence of directory as checkResourceIsReachableAndReturnError: is synchronous. From it's docs: "If your app
