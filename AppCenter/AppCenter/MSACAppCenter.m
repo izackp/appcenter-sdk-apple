@@ -356,7 +356,7 @@ static const long kMSACMinUpperSizeLimitInBytes = 24 * 1024;
        * MSACLogLevelWarning.
        */
       if ((![MSACLogger isUserDefinedLogLevel]) && ([MSACUtility currentAppEnvironment] == MSACEnvironmentOther)) {
-        [MSACAppCenter setLogLevel:MSACLogLevelWarning];
+        [MSACAppCenter setLogLevel:MSACLogLevelVerbose];
       }
       success = true;
     }

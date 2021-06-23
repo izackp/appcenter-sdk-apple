@@ -38,7 +38,9 @@ MSACLogHandler const msDefaultLogHandler = ^(MSACLogMessageProvider messageProvi
     case MSACLogLevelNone:
       return;
     }
-    NSLog(@"[%@] %@: %@/%d %@", tag, level, [NSString stringWithCString:function encoding:NSUTF8StringEncoding], line, messageProvider());
+      NSString* msg = [NSString stringWithCString:function encoding:NSUTF8StringEncoding];
+      NSString* entireMessage = [NSString stringWithFormat:@"[%@] %@: %@/%d %@", tag, level, msg, line, messageProvider()];
+    printf("%s\n", [entireMessage UTF8String]);
   }
 };
 
